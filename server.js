@@ -1,60 +1,67 @@
 const express = require('express')
 const bodyParser = require('body-parser');
 var MongoClient = require('mongodb').MongoClient;
+var randomstring = require("randomstring");
 const app = express();
+var mongoose = require('mongoose');
 var ObjectID = require('mongodb').ObjectID;
 app.use(bodyParser.json());
 const url = "mongodb://localhost:27017/chitchat";
 
 
-// app.post('/createdb', function (req, res) {
-//     MongoClient.connect(url, function (err, db) {
-//         if (err) res.send('error :/!');
-//         else {
-//             var dbo = db.db("chitchat");
-//             dbo.createCollection("users", function (err) {
-//                 if (err) res.send("error while creating users table!");
-//                 // res.send("Collection created!");
-//             });
-//             dbo.createCollection("conversations", function (err) {
-//                 if (err) res.send("error while creating conversations table!");
-//                 // res.send("Collection created!");
-//             });
-//             dbo.createCollection("messages", function (err) {
-//                 if (err) res.send("error while creating conversations table!");
-//                 // res.send("Collection created!");
-//             });
-//         }
-//     });
-// })
+var userSchema = userSchema = mongoose.Schema({
+    username: String,
+    password: String,
+    token: String,
+    email: String,
+    contacts: [],
+    conversations: []
+});
 
+var userModel = mongoose.model('User', userSchema);
+
+
+app.post('/createschemas', function (req, res) {
+    mongoose.connect(url);
+    var db = mongoose.connection;
+    db.on('error', console.error.bind(console, 'connection error:'));
+    db.once('open', function () {
+        console.log("schema created!");
+        res.send("schema created!");
+    });
+})
 
 app.post('/login', function (req, res) {
     if (req.body) {
-        MongoClient.connect(url, function (err, db) {
-            if (err) res.send("error!" + err);
-            else {
-                var dbo = db.db("chitchat");
-                dbo.collection("users").findOne({email: req.body.email}, {}, function (err, result) {
-                    res.send(result);
-                    db.close();
-                })
-            }
-        })
+        mongoose.connect(url);
+        var db = mongoose.connection;
+        db.on('error', console.error.bind(console, 'connection error:'));
+        db.once('open', function () {
+            const query = userModel.find();
+            query.collection(userModel.collection);
+            query.exec().then(user => {
+                console.log("user: ", user);
+                res.send(user);
+            })
+        });
     }
 })
 
 app.post('/signup', function (req, res) {
-    MongoClient.connect(url, function (err, db) {
-        if (err) res.send("error!");
-        else {
-            var dbo = db.db("chitchat");
-            dbo.collection("users").insertOne(req.body, function (err) {
-                if (err) res.send("error while inserting user!" + err);
-                else res.send("user " + req.body.username + " has been created!");
-                db.close();
-            });
-        }
+    mongoose.connect(url);
+    var db = mongoose.connection;
+    db.on('error', console.error.bind(console, 'connection error:'));
+    db.once('open', function () {
+        var newUser = new userModel({
+            username: req.body.username,
+            password: req.body.password,
+            email: req.body.email,
+            token: randomstring.generate(7),
+            contacts: [],
+            conversations: []
+        });
+        newUser.save();
+        res.send(newUser);
     });
 })
 
@@ -85,8 +92,34 @@ app.post('/add-contact', function (req, res) {
     }
 })
 
-app.get('/contact-list', function (req, res) {
+app.get('/contact-list/:userid', function (req, res) {
+    MongoClient.connect(url, function (err, db) {
+        if (err) res.send(err);
+        else {
+            var dbo = db.db("chitchat");
+            var usersRef = dbo.collection("users");
+            var targetUser = null;
+            usersRef.findOne({_id: ObjectID(req.params.userid)})
+                .then(result => {
+                    console.log(result);
+                    targetUser = result;
+                })
+                .then(() => {
+                    var parsedContacts = [];
+                    for (var i = 0; i < targetUser.contacts.length; i++) {
+                        parsedContacts.push(ObjectID(targetUser.contacts[i]));
+                    }
+                    usersRef.find({_id: {$in: parsedContacts}}, {username: 1}, function (err, contactList) {
 
+                        console.log("contactList: ", contactList.toArray());
+                        res.send(contactList);
+                    })
+                })
+            // var targetUserContacts = usersRef.find({_id: {$in: targetUser.contacts}});
+            // console.log("targetUserContacts: ",targetUserContacts);
+
+        }
+    })
 })
 
 
@@ -105,10 +138,10 @@ app.get('/find/:username', function (req, res) {
     } else res.send("parameter username is empty");
 })
 
-
-app.get('/conversation/:id', function (req, res) {
-
-})
+//
+// app.get('/conversation/:id', function (req, res) {
+//
+// })
 
 app.post('/sendMessage', function (req, res) {
     if (req.body) {
