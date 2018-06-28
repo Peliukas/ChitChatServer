@@ -2,8 +2,9 @@ const express = require('express')
 const bodyParser = require('body-parser');
 var MongoClient = require('mongodb').MongoClient;
 const app = express();
+var ObjectID = require('mongodb').ObjectID;
 app.use(bodyParser.json());
-var url = "mongodb://localhost:27017/chitchat";
+const url = "mongodb://localhost:27017/chitchat";
 
 
 // app.post('/createdb', function (req, res) {
@@ -35,8 +36,8 @@ app.post('/login', function (req, res) {
             else {
                 var dbo = db.db("chitchat");
                 dbo.collection("users").findOne({email: req.body.email}, {}, function (err, result) {
-                    console.log("found object ", result);
                     res.send(result);
+                    db.close();
                 })
             }
         })
@@ -48,7 +49,6 @@ app.post('/signup', function (req, res) {
         if (err) res.send("error!");
         else {
             var dbo = db.db("chitchat");
-            console.log("request body: ", req.body);
             dbo.collection("users").insertOne(req.body, function (err) {
                 if (err) res.send("error while inserting user!" + err);
                 else res.send("user " + req.body.username + " has been created!");
@@ -65,10 +65,19 @@ app.post('/add-contact', function (req, res) {
             if (err) res.send(err);
             else {
                 var dbo = db.db("chitchat");
-                dbo.collection("users").updateOne({"_id": req.body.sender_id}, {$push: {"contacts": req.body.contact_id}}, function (err, result) {
-                    console.log("found object ", result);
-                    res.send(result);
-                })
+                console.log("senderID: ", req.body.sender_id);
+                dbo.collection("users").updateOne(
+                    {_id: ObjectID(req.body.sender_id)},
+                    {$push: {contacts: req.body.contact_id}},
+                    function (err, result) {
+                        if (err) res.send(err);
+                        else {
+                            db.close();
+                            // console.log("Updating: ", result);
+                            res.send(result);
+                        }
+                    }
+                );
             }
         })
     } else {
@@ -116,32 +125,32 @@ app.listen(3000, function () {
 })
 
 
-async function findOne(objectName, value, opts = {}) {
-    if (value && objectName) {
-        MongoClient.connect(url, function (err, db) {
-            if (err) return false;
-            else {
-                var dbo = db.db("chitchat");
-                dbo.collection(objectName).findOne(value ? value : {}, opts, function (err, result) {
-                    console.log("found object ", result);
-                    return result;
-                })
-            }
-        })
-    }
-}
+// async function findOne(objectName, value, opts = {}) {
+//     if (value && objectName) {
+//         MongoClient.connect(url, function (err, db) {
+//             if (err) return false;
+//             else {
+//                 var dbo = db.db("chitchat");
+//                 dbo.collection(objectName).findOne(value ? value : {}, opts, function (err, result) {
+//                     console.log("found object ", result);
+//                     return result;
+//                 })
+//             }
+//         })
+//     }
+// }
 
-async function insertOne(objectName, value) {
-    if (value && objectName) {
-        MongoClient.connect(url, function (err, db) {
-            if (err) return false;
-            else {
-                var dbo = db.db("chitchat");
-                dbo.collection(objectName).insertOne(value, function (err, result) {
-                    console.log("object inserted: ", result);
-                    return result;
-                })
-            }
-        })
-    }
-}
+// async function insertOne(objectName, value) {
+//     if (value && objectName) {
+//         MongoClient.connect(url, function (err, db) {
+//             if (err) return false;
+//             else {
+//                 var dbo = db.db("chitchat");
+//                 dbo.collection(objectName).insertOne(value, function (err, result) {
+//                     console.log("object inserted: ", result);
+//                     return result;
+//                 })
+//             }
+//         })
+//     }
+// }
