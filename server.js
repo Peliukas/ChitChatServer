@@ -37,12 +37,24 @@ app.post('/login', function (req, res) {
         var db = mongoose.connection;
         db.on('error', console.error.bind(console, 'connection error:'));
         db.once('open', function () {
-            const query = userModel.find();
+            const query = userModel.findOne();
             query.collection(userModel.collection);
-            query.exec().then(user => {
-                console.log("user: ", user);
-                res.send(user);
-            })
+            query.where('email')
+                .eq(req.body.email)
+                .and({'password': req.body.password})
+                .exec()
+                .then(user => {
+                    const contactQuery = userModel.find();
+                    contactQuery.collection(userModel.collection);
+                    contactQuery.where('_id')
+                        .in(user.contacts)
+                        .select('username')
+                        .exec()
+                        .then(contactList => {
+                            user.contacts = contactList;
+                            res.send(user);
+                        })
+                })
         });
     }
 })
@@ -67,59 +79,45 @@ app.post('/signup', function (req, res) {
 
 
 app.post('/add-contact', function (req, res) {
-    if (req.body.contact_id && req.body.sender_id) {
-        MongoClient.connect(url, function (err, db) {
-            if (err) res.send(err);
-            else {
-                var dbo = db.db("chitchat");
-                console.log("senderID: ", req.body.sender_id);
-                dbo.collection("users").updateOne(
-                    {_id: ObjectID(req.body.sender_id)},
-                    {$push: {contacts: req.body.contact_id}},
-                    function (err, result) {
-                        if (err) res.send(err);
-                        else {
-                            db.close();
-                            // console.log("Updating: ", result);
-                            res.send(result);
-                        }
-                    }
-                );
-            }
-        })
+    if (req.body.contact_id && req.body.sender_token) {
+        mongoose.connect(url);
+        var db = mongoose.connection;
+        db.on('error', console.error.bind(console, 'connection error:'));
+        db.once('open', function () {
+            const query = userModel.findOne();
+            query.collection(userModel.collection);
+            query.where('token').eq(req.body.sender_token).exec().then(user => {
+                user.contacts.push(req.body.contact_id);
+                user.save();
+                res.send(user);
+            })
+        });
     } else {
         res.send("param contact_id or sender_id is empty");
     }
 })
 
-app.get('/contact-list/:userid', function (req, res) {
-    MongoClient.connect(url, function (err, db) {
-        if (err) res.send(err);
-        else {
-            var dbo = db.db("chitchat");
-            var usersRef = dbo.collection("users");
-            var targetUser = null;
-            usersRef.findOne({_id: ObjectID(req.params.userid)})
-                .then(result => {
-                    console.log(result);
-                    targetUser = result;
-                })
-                .then(() => {
-                    var parsedContacts = [];
-                    for (var i = 0; i < targetUser.contacts.length; i++) {
-                        parsedContacts.push(ObjectID(targetUser.contacts[i]));
-                    }
-                    usersRef.find({_id: {$in: parsedContacts}}, {username: 1}, function (err, contactList) {
-
-                        console.log("contactList: ", contactList.toArray());
+app.get('/contact-list/:token', function (req, res) {
+    if (req.params.token) {
+        mongoose.connect(url);
+        var db = mongoose.connection;
+        db.on('error', console.error.bind(console, 'connection error:'));
+        db.once('open', function () {
+            const query = userModel.findOne();
+            query.collection(userModel.collection);
+            query.where('token').eq(req.params.token).exec().then(user => {
+                const contactQuery = userModel.find();
+                contactQuery.collection(userModel.collection);
+                contactQuery.where('_id').in(user.contacts)
+                    .select('username')
+                    .exec()
+                    .then(contactList => {
+                        console.log("contact list: ", contactList);
                         res.send(contactList);
                     })
-                })
-            // var targetUserContacts = usersRef.find({_id: {$in: targetUser.contacts}});
-            // console.log("targetUserContacts: ",targetUserContacts);
-
-        }
-    })
+            })
+        });
+    }
 })
 
 
