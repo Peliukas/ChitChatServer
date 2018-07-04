@@ -1,10 +1,8 @@
-const express = require('express')
+const express = require('express');
 const bodyParser = require('body-parser');
-var MongoClient = require('mongodb').MongoClient;
 var randomstring = require("randomstring");
 const app = express();
 var mongoose = require('mongoose');
-var ObjectID = require('mongodb').ObjectID;
 app.use(bodyParser.json());
 const url = "mongodb://localhost:27017/chitchat";
 
@@ -19,6 +17,13 @@ var userSchema = userSchema = mongoose.Schema({
 });
 
 var userModel = mongoose.model('User', userSchema);
+
+var conversationSchema = mongoose.Schema({
+    members: [],
+    messages: []
+});
+
+var conversationModel = mongoose.model('Conversation', conversationSchema);
 
 
 app.post('/createschemas', function (req, res) {
@@ -52,6 +57,7 @@ app.post('/login', function (req, res) {
                         .exec()
                         .then(contactList => {
                             user.contacts = contactList;
+                            console.log("RETURNING: ", user);
                             res.send(user);
                         })
                 })
@@ -77,6 +83,18 @@ app.post('/signup', function (req, res) {
     });
 })
 
+app.get('/find/:username', function (req, res) {
+    mongoose.connect(url);
+    console.log("User name: ", req.params.username);
+    var db = mongoose.connection;
+    db.on('error', console.error.bind(console, 'connection error:'));
+    db.once('open', function () {
+        const query = userModel.find({"username": {"$regex": req.params.username}}, {"username": 1});
+        query.collection(userModel.collection).exec().then(userList => {
+            res.send(userList);
+        })
+    });
+})
 
 app.post('/add-contact', function (req, res) {
     if (req.body.contact_id && req.body.sender_token) {
@@ -89,7 +107,12 @@ app.post('/add-contact', function (req, res) {
             query.where('token').eq(req.body.sender_token).exec().then(user => {
                 user.contacts.push(req.body.contact_id);
                 user.save();
-                res.send(user);
+                var newConversation = new conversationModel({
+                    members: [req.body.contact_id, user._id],
+                    messages: []
+                });
+                newConversation.save();
+                res.send({user: user, converstion: newConversation});
             })
         });
     } else {
@@ -97,15 +120,17 @@ app.post('/add-contact', function (req, res) {
     }
 })
 
-app.get('/contact-list/:token', function (req, res) {
-    if (req.params.token) {
+app.get('/contact-list', function (req, res) {
+    console.log("Auth head: ", req.header('Authorization'));
+    if (req.header('Authorization')) {
+        var userToken = req.header('Authorization');
         mongoose.connect(url);
         var db = mongoose.connection;
         db.on('error', console.error.bind(console, 'connection error:'));
         db.once('open', function () {
             const query = userModel.findOne();
             query.collection(userModel.collection);
-            query.where('token').eq(req.params.token).exec().then(user => {
+            query.where('token').eq(userToken).exec().then(user => {
                 const contactQuery = userModel.find();
                 contactQuery.collection(userModel.collection);
                 contactQuery.where('_id').in(user.contacts)
@@ -121,67 +146,82 @@ app.get('/contact-list/:token', function (req, res) {
 })
 
 
-app.get('/find/:username', function (req, res) {
-    if (req.params.username) {
-        MongoClient.connect(url, function (err, db) {
-            if (err) res.send(err);
-            else {
-                var dbo = db.db("chitchat");
-                dbo.collection("users").findOne(req.params, function (err, result) {
-                    console.log("found object ", result);
-                    res.send(result);
-                })
-            }
-        })
-    } else res.send("parameter username is empty");
+app.post('/sendMessage', function (req, res) {
+    if (req.body.conversation_id) {
+        mongoose.connect(url);
+        var db = mongoose.connection;
+        db.on('error', console.error.bind(console, 'connection error:'));
+        db.once('open', function () {
+            const query = conversationModel.findOne();
+            query.collection(conversationModel.collection);
+            query.where('_id').eq(req.body.conversation_id).exec().then(conversation => {
+                conversation.messages.push({author_id: req.body.author_id, body: req.body.body, timestamp: new Date()});
+                conversation.save();
+                console.log("conversation: ", conversation);
+                res.send(conversation);
+            })
+        });
+    } else {
+        res.send("fail");
+    }
 })
 
-//
-// app.get('/conversation/:id', function (req, res) {
-//
-// })
 
-app.post('/sendMessage', function (req, res) {
-    if (req.body) {
-        findOne("conversations", {"_id": req.body.conversationID}).then(conversation => {
+app.get('/conversations', function (req, res) {
+    mongoose.connect(url);
+    var db = mongoose.connection;
+    db.on('error', console.error.bind(console, 'connection error:'));
+    db.once('open', function () {
+        const query = userModel.findOne();
+        query.collection(userModel.collection);
+        query.where('token')
+            .eq(req.header('Authorization'))
+            .exec()
+            .then(loggedInUser => {
+                if (loggedInUser._id) {
+                    const query = conversationModel.find();
+                    query.collection(conversationModel.collection)
+                        .where('members')
+                        .in(loggedInUser._id)
+                        .exec()
+                        .then(conversationList => {
+                            console.log("conversationList: ", conversationList);
+                            const query = userModel.find();
+                            var newConversations = [];
+                            conversationList.forEach(conversation => {
+                                query.collection(userModel.collection)
+                                    .where('_id').in(conversation.members)
+                                    .exec()
+                                    .then(conversationMembers => {
+                                        console.log('conversation members: ', conversationMembers);
+                                        conversation.members = conversationMembers;
+                                        newConversations.push(conversation);
+                                    });
+                            }).then(() => {
+                                res.send(newConversations);
+                            });
+                        })
+                } else {
+                    res.error(500);
+                }
+            })
+    });
+})
 
-        }, reason => {
-            insertOne("conversations", {})
-        });
-    }
+
+app.get('/conversation/:id', function (req, res) {
+    mongoose.connect(url);
+    var db = mongoose.connection;
+    db.on('error', console.error.bind(console, 'connection error:'));
+    db.once('open', function () {
+        const query = conversationModel.findOne();
+        query.collection(conversationModel.collection);
+        query.where('_id').eq(req.body.conversation_id).exec().then(conversation => {
+            res.send(conversation);
+        })
+    });
 })
 
 app.listen(3000, function () {
     console.log('ChitChat server listening on port 3000!')
 })
-
-
-// async function findOne(objectName, value, opts = {}) {
-//     if (value && objectName) {
-//         MongoClient.connect(url, function (err, db) {
-//             if (err) return false;
-//             else {
-//                 var dbo = db.db("chitchat");
-//                 dbo.collection(objectName).findOne(value ? value : {}, opts, function (err, result) {
-//                     console.log("found object ", result);
-//                     return result;
-//                 })
-//             }
-//         })
-//     }
-// }
-
-// async function insertOne(objectName, value) {
-//     if (value && objectName) {
-//         MongoClient.connect(url, function (err, db) {
-//             if (err) return false;
-//             else {
-//                 var dbo = db.db("chitchat");
-//                 dbo.collection(objectName).insertOne(value, function (err, result) {
-//                     console.log("object inserted: ", result);
-//                     return result;
-//                 })
-//             }
-//         })
-//     }
-// }
