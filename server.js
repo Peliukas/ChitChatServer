@@ -57,7 +57,6 @@ app.post('/login', function (req, res) {
                         .exec()
                         .then(contactList => {
                             user.contacts = contactList;
-                            console.log("RETURNING: ", user);
                             res.send(user);
                         })
                 })
@@ -85,11 +84,10 @@ app.post('/signup', function (req, res) {
 
 app.get('/find/:username', function (req, res) {
     mongoose.connect(url);
-    console.log("User name: ", req.params.username);
     var db = mongoose.connection;
     db.on('error', console.error.bind(console, 'connection error:'));
     db.once('open', function () {
-        const query = userModel.find({"username": {"$regex": req.params.username}}, {"username": 1});
+        const query = userModel.find({"username": {"$regex": req.params.username.toLowerCase()}}, {"username": 1});
         query.collection(userModel.collection).exec().then(userList => {
             res.send(userList);
         })
@@ -97,7 +95,7 @@ app.get('/find/:username', function (req, res) {
 })
 
 app.post('/add-contact', function (req, res) {
-    if (req.body.contact_id && req.body.sender_token) {
+    if (req.body) {
         mongoose.connect(url);
         var db = mongoose.connection;
         db.on('error', console.error.bind(console, 'connection error:'));
@@ -108,36 +106,73 @@ app.post('/add-contact', function (req, res) {
                 user.contacts.push(req.body.contact_id);
                 user.save();
                 var newConversation = new conversationModel({
-                    members: [req.body.contact_id, user._id],
+                    members: [req.body.contact_id, user._id.toString()],
                     messages: []
                 });
                 newConversation.save();
-                res.send({user: user, converstion: newConversation});
+                const query = userModel.find();
+                query.collection(userModel.collection);
+                query.where('_id').in(user.contacts)
+                    .select('username')
+                    .exec().then(userContacts => {
+                    console.log("user contacts: ", userContacts);
+                    res.send(userContacts);
+                });
             })
         });
     } else {
-        res.send("param contact_id or sender_id is empty");
+        res.send("contact id not set!")
     }
 })
 
+
+app.post('/remove-contacts', function (req, res) {
+    mongoose.connect(url);
+    var db = mongoose.connection;
+    db.on('error', console.error.bind(console, 'connection error:'));
+    db.once('open', function () {
+        const query = userModel.findOne();
+        query.collection(userModel.collection);
+        query.where('token').eq(req.body.sender_token).exec().then(user => {
+            user.contacts = [];
+            user.save();
+            console.log("user contacts: ", user.contacts);
+            res.send(user.contacts);
+        })
+    });
+})
+
+app.delete('/conversations', function (req, res) {
+    mongoose.connect(url);
+    var db = mongoose.connection;
+    db.on('error', console.error.bind(console, 'connection error:'));
+    db.once('open', function () {
+        const query = conversationModel.findOne();
+        query.collection(conversationModel.collection);
+        query.remove({}).exec().then(() => {
+            res.send("conversations were purged!");
+        })
+    });
+})
+
 app.get('/contact-list', function (req, res) {
-    console.log("Auth head: ", req.header('Authorization'));
     if (req.header('Authorization')) {
         var userToken = req.header('Authorization');
         mongoose.connect(url);
         var db = mongoose.connection;
         db.on('error', console.error.bind(console, 'connection error:'));
         db.once('open', function () {
+            //find logged in user
             const query = userModel.findOne();
             query.collection(userModel.collection);
             query.where('token').eq(userToken).exec().then(user => {
+                //get logged in user contacts
                 const contactQuery = userModel.find();
                 contactQuery.collection(userModel.collection);
                 contactQuery.where('_id').in(user.contacts)
                     .select('username')
                     .exec()
                     .then(contactList => {
-                        console.log("contact list: ", contactList);
                         res.send(contactList);
                     })
             })
@@ -209,14 +244,32 @@ app.get('/conversations', function (req, res) {
 })
 
 
-app.get('/conversation/:id', function (req, res) {
+app.get('/conversation/:contact_id', function (req, res) {
+    mongoose.connect(url);
+    var db = mongoose.connection;
+    db.on('error', console.error.bind(console, 'connection error:'));
+    db.once('open', function () {
+        const query = userModel.findOne();
+        query.collection(userModel.collection);
+        query.where('token').eq(req.header("Authorization")).exec().then(user => {
+            const query = conversationModel.findOne();
+            query.collection(conversationModel.collection);
+            query.where('members').in([req.params.contact_id, user._id]).exec().then(conversation => {
+                console.log("conversation:", conversation);
+                res.send(conversation._id);
+            })
+        })
+    });
+})
+
+app.get('/conversation/:conversation_id', function (req, res) {
     mongoose.connect(url);
     var db = mongoose.connection;
     db.on('error', console.error.bind(console, 'connection error:'));
     db.once('open', function () {
         const query = conversationModel.findOne();
         query.collection(conversationModel.collection);
-        query.where('_id').eq(req.body.conversation_id).exec().then(conversation => {
+        query.where('_id').eq(req.params.conversation_id).exec().then(conversation => {
             res.send(conversation);
         })
     });
