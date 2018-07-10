@@ -5,8 +5,8 @@ const app = express();
 var mongoose = require('mongoose');
 app.use(bodyParser.json());
 const url = "mongodb://localhost:27017/chitchat";
-
-
+var http = require('http').Server(app);
+var io = require('socket.io')(http);
 var userSchema = userSchema = mongoose.Schema({
     username: String,
     password: String,
@@ -22,6 +22,8 @@ var conversationSchema = mongoose.Schema({
     members: [],
     messages: []
 });
+
+var connectedClients = [];
 
 var conversationModel = mongoose.model('Conversation', conversationSchema);
 
@@ -59,6 +61,8 @@ app.post('/login', function (req, res) {
                             user.contacts = contactList;
                             res.send(user);
                         })
+                }, reason => {
+                    res.send("Failed to login: ");
                 })
         });
     }
@@ -115,7 +119,6 @@ app.post('/add-contact', function (req, res) {
                 query.where('_id').in(user.contacts)
                     .select('username')
                     .exec().then(userContacts => {
-                    console.log("user contacts: ", userContacts);
                     res.send(userContacts);
                 });
             })
@@ -124,7 +127,6 @@ app.post('/add-contact', function (req, res) {
         res.send("contact id not set!")
     }
 })
-
 
 app.post('/remove-contacts', function (req, res) {
     mongoose.connect(url);
@@ -142,6 +144,23 @@ app.post('/remove-contacts', function (req, res) {
     });
 })
 
+//clean conversation messages by conversation ID
+app.delete('/messages', function(req, res){
+    mongoose.connect(url);
+    var db = mongoose.connection;
+    db.on('error', console.error.bind(console, 'connection error:'));
+    db.once('open', function () {
+        const query = conversationModel.findOne();
+        query.collection(conversationModel.collection);
+        query.where('_id').eq(req.body.conversation_id).exec().then(conversation => {
+            conversation.messages = [];
+            conversation.save();
+            res.send("conversation messages were deleted!");
+        })
+    });
+})
+
+//delete conversation by conversation ID
 app.delete('/conversations', function (req, res) {
     mongoose.connect(url);
     var db = mongoose.connection;
@@ -180,20 +199,31 @@ app.get('/contact-list', function (req, res) {
     }
 })
 
-
 app.post('/sendMessage', function (req, res) {
-    if (req.body.conversation_id) {
+    if (req.body.conversation_id && req.body.message_body) {
         mongoose.connect(url);
         var db = mongoose.connection;
         db.on('error', console.error.bind(console, 'connection error:'));
         db.once('open', function () {
-            const query = conversationModel.findOne();
-            query.collection(conversationModel.collection);
-            query.where('_id').eq(req.body.conversation_id).exec().then(conversation => {
-                conversation.messages.push({author_id: req.body.author_id, body: req.body.body, timestamp: new Date()});
-                conversation.save();
-                console.log("conversation: ", conversation);
-                res.send(conversation);
+            const query = userModel.findOne();
+            query.collection(userModel.collection);
+            query.where('token').eq(req.body.sender_token).exec().then( user => {
+                const query = conversationModel.findOne();
+                query.collection(conversationModel.collection);
+                query.where('_id').eq(req.body.conversation_id).exec().then(conversation => {
+                    conversation.messages.push({
+                        author_id: user._id,
+                        body: req.body.message_body,
+                        timestamp: new Date()
+                    });
+                    conversation.save();
+                    for(var member of conversation.members){
+                        if(connectedClients[member._id]){
+                            connectedClients[member._id].emit('notification',"message arrived");
+                        }
+                    }
+                    res.send(conversation);
+                })
             })
         });
     } else {
@@ -255,8 +285,7 @@ app.get('/conversation/:contact_id', function (req, res) {
             const query = conversationModel.findOne();
             query.collection(conversationModel.collection);
             query.where('members').in([req.params.contact_id, user._id]).exec().then(conversation => {
-                console.log("conversation:", conversation);
-                res.send(conversation._id);
+                res.send(conversation);
             })
         })
     });
@@ -275,6 +304,17 @@ app.get('/conversation/:conversation_id', function (req, res) {
     });
 })
 
-app.listen(3000, function () {
+http.listen(3000, function () {
     console.log('ChitChat server listening on port 3000!')
 })
+
+
+io.on('connection', function(socket){
+    socket.on('register-client', userId => {
+        connectedClients[userId] = socket;
+    });
+
+    socket.on('hello', function(msg){
+      socket.emit('notification', "hi to u too");
+    });
+  });
